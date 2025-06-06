@@ -1,0 +1,3 @@
+.venv
+.env
+/pdf_to_read/*.pdf
