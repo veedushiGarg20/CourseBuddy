@@ -30,9 +30,21 @@ if __name__ == "__main__":
 
     new_vectorstore = FAISS.load_local("faiss_index_pdf", embeddings)
     qa = RetrievalQA.from_chain_type(
-        llm=OpenAI(model = "gpt-4o-mini", max_tokens=800), chain_type="stuff", retriever=new_vectorstore.as_retriever()
+        llm=OpenAI(model = "gpt-4o-mini", max_tokens=800), 
+        chain_type="stuff", 
+        retriever=new_vectorstore.as_retriever(),
+        return_source_documents = True,
     )
 
-    response = qa.run("explain binomial distribution and it's formula. also explain the solution of problem 1 of binomial distribution")
+    question = "explain binomial distribution and it's formula. also explain the solution of problem 1 of binomial distribution"
+    result = qa({"query": question})
+    
+    response = result["result"]
+    sources = result["source_documents"]
+
+    
+
 
     print(response)
+    print("\n\n### SOURCES ###\n\n")
+    print(sources)
