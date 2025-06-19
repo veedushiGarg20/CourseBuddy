@@ -10,7 +10,7 @@ from langchain.llms import OpenAI
 from langchain.vectorstores import DocArrayInMemorySearch
 from langchain.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.chains.retrieval_qa.prompt import PROMPT
+from langchain.chains.retrieval_qa.prompt import PROMPT_INTERNAL
 
 load_dotenv()
 
@@ -42,6 +42,8 @@ if 'role' not in st.session_state:
     st.session_state.role = None
 if 'vectorstore' not in st.session_state:
     st.session_state.vectorstore = None
+if 'processed_files' not in st.session_state:
+    st.session_state.processed_files = set()
 
 def get_file_hash(file_path : str) -> str:
     ''' Generating a MD5 hash of file content for indexing '''
@@ -52,10 +54,8 @@ def get_file_hash(file_path : str) -> str:
 def process_pdf(pdf_path: str) -> FAISS:
     ''' Dynamically handle user uploaded pdf with caching '''
     file_hash = get_file_hash(pdf_path)
-    index_dir = "faiss_indexes"
-    index_path = os.path.join(index_dir, f"{file_hash}")
+    index_path = os.path.join(INDEX_DIR, f"{file_hash}")
     
-    os.makedirs(index_dir, exist_ok=True)
     embeddings = OpenAIEmbeddings(openai_api_key = os.environ.get("OPENAI_API_KEY"))
     
     # Returning existing index if found
@@ -90,6 +90,33 @@ def process_pdf(pdf_path: str) -> FAISS:
     vectorstore.save_local(index_path)
     return vectorstore
 
+def handle_pdf_upload(uploaded_file):
+    try:
+        filename = uploaded_file.name
+        dest_path = os.path.join(UPLOAD_DIR, filename)
+        
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
+            tmp_file.write(uploaded_file.getbuffer())
+            tmp_file_path = tmp_file.name
+        
+        file_hash = get_file_hash(tmp_file_path)
+        
+        if file_hash in st.session_state.processed_files:
+            st.warning("This file has been processed.")
+            return None
+            
+        with st.spinner("Processing PDF..."):
+            new_vectorstore = process_pdf(tmp_file_path)
+            st.session_state.processed_files.add(file_hash)
+            return new_vectorstore
+        
+    except Exception as e:
+        st.error(f"Error processing file: {str(e)}")
+        
+    finally:
+        if 'temp_file_path' in locals() and os.path.exists(tmp_file_path):
+            os.unlink(tmp_file_path)
+
 def login():
     st.subheader("Login")
     username = st.text_input("Username: ")
@@ -113,120 +140,65 @@ def admin_dashboard():
     
     uploaded_file = st.file_uploader("Upload PDF: ", type="pdf")
     if uploaded_file is not None:
-        if not uploaded_file.name.lower().endswith('.pdf'):
-            st.error("Only PDF files are accepted")
-            return
-        else:
-                try:
-                    filename = uploaded_file.name
-                    dest_path = os.path.join(UPLOAD_DIR, filename)
-                    
-                    if os.path.exists(dest_path):
-                        overwrite = st.checkbox("File already exists. Overwrite?")
-                        if not overwrite:
-                            return
-                    
-                    with open(dest_path, "wb") as dest:
-                        dest.write(uploaded_file.getbuffer())
-                        
-                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
-                        tmp_file.write(uploaded_file.getbuffer())
-                        tmp_file_path = tmp_file.name
-                    
-                    with st.spinner("Processing PDF..."):
-                        new_vector_store = process_pdf(tmp_file_path)
-                    
-                    if st.session_state.vectorstore:
-                        st.session_state.vectorstore.merge_from(new_vector_store)
-                        st.success("PDF merged with existing knowledge base.")
-                    else:
-                        st.session_state.vectorstore = new_vector_store
-                        st.success("New knowledge base created.")    
-                        
-                except Exception as e:
-                    st.error(f"Error : {str(e)}")
-                    if os.path.exists(tmp_file_path):
-                        os.unlink(tmp_file_path)
-                    
-                finally:
-                    if 'tmp_file_path' in locals() and os.path.exists(tmp_file_path):
-                        os.unlink(tmp_file_path)
+        new_vector_store = handle_pdf_upload(uploaded_file)
+        if new_vector_store:
+            if st.session_state.vectorstore:
+                st.session_state.vectorstore.merge_from(new_vector_store)
+                st.success("PDF merged with existing knowledge base.")
+            else:
+                st.session_state.vectorstore = new_vector_store
+                st.success("New knowledge base has been created.")
+
                     
 def user_dashboard():
     st.title("CourseBuddy!")
     st.header("User Dashboard")
     st.subheader(f"Welcome {st.session_state.username}")
     
-    if st.session_state.vectorstore is None:
-        st.warning("Please upload a PDF document first")
-        return
-    
     uploaded_file = st.file_uploader("Upload PDF: ", type="pdf")
-    if uploaded_file:
-        if not uploaded_file.name.lower().endswith('.pdf'):
-            st.error("Only PDF files are accepted")
-            return
-        else:
-                try:
-                    filename = uploaded_file.name
-                    dest_path = os.path.join(UPLOAD_DIR, filename)
-                    
-                    if os.path.exists(dest_path):
-                        overwrite = st.checkbox("File already exists. Overwrite?")
-                        if not overwrite:
-                            return
-                    
-                    with open(dest_path, "wb") as dest:
-                        dest.write(uploaded_file.getbuffer())
-                        
-                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
-                        tmp_file.write(uploaded_file.getbuffer())
-                        tmp_file_path = tmp_file.name
-                    
-                    with st.spinner("Processing PDF..."):
-                        new_vector_store = process_pdf(tmp_file_path)
-                    
-                    if st.session_state.vectorstore:
-                        st.session_state.vectorstore.merge_from(new_vector_store)
-                        st.success("PDF merged with existing knowledge base.")
-                    else:
-                        st.session_state.vectorstore = new_vector_store
-                        st.success("New knowledge base created.")    
-                        
-                except Exception as e:
-                    st.error(f"Error : {str(e)}")
-                    if os.path.exists(tmp_file_path):
-                        os.unlink(tmp_file_path)
-                    
-                finally:
-                    if 'tmp_file_path' in locals() and os.path.exists(tmp_file_path):
-                        os.unlink(tmp_file_path)
+    if uploaded_file is not None:
+        new_vector_store = handle_pdf_upload(uploaded_file)
+        if new_vector_store:
+            if st.session_state.vectorstore:
+                st.session_state.vectorstore.merge_from(new_vector_store)
+                st.success("PDF merged with existing knowledge base.")
+            else:
+                st.session_state.vectorstore = new_vector_store
+                st.success("New knowledge base has been created.")
     
     question = st.text_input("Enter your query: ")
     
     if st.button("Submit") and question:
         if st.session_state.vectorstore:
-            qa = RetrievalQA.from_chain_type(
-                llm=OpenAI(model = "gpt-4o-mini", max_tokens=1000),
-                chain_type="stuff",
-                chain_type_kwargs= {"prompt": PROMPT},
-                retriever=st.session_state.vectorstore.as_retriever(),
-                return_source_documents=True,
-            )
+            try:
+                qa = RetrievalQA.from_chain_type(
+                    llm=OpenAI(model = "gpt-4o-mini", max_tokens=1000),
+                    chain_type="stuff",
+                    chain_type_kwargs= {"prompt": PROMPT_INTERNAL},
+                    retriever=st.session_state.vectorstore.as_retriever(),
+                    return_source_documents=True,
+                )
 
-            result = qa({"query": question})
+                result = qa({"query": question})
 
-            response = result["result"]
-            sources = result["source_documents"]
+                response = result["result"]
+                sources = result["source_documents"]
 
-            source_text = f"{sources[0].metadata['source']}&nbsp; - &nbsp;Page {sources[0].metadata['page_label']}"
-            
-            print("\n\n### SOURCE ###\n\n")
-            print(sources)
-            
-            st.write(response)
-            with st.expander("Sources"):
-                st.badge(source_text)
+                if sources and len(sources) > 0:
+                    source_text = f"{sources[0].metadata['source']}&nbsp; - &nbsp;Page {sources[0].metadata['page_label']}"
+                else:
+                    source_text = "No specific source found"
+                
+                
+                print("\n\n### SOURCE ###\n\n")
+                print(sources)
+                
+                st.write(response)
+                with st.expander("Sources"):
+                    st.badge(source_text)
+                    
+            except Exception as e:
+                st.error(f"Error processing query: {str(e)}")
                 
         else:
             st.warning("No documents loaded - please upload a PDF first")
