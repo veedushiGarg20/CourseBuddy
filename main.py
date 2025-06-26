@@ -177,14 +177,15 @@ class WebContentProcessor:
             'key': api_key,
             'cx': cse_id,
             'num': num,
-            'fileType': 'pdf',
+            # 'fileType': 'pdf',
             'excludeTerms': 'youtube, video, watch',
-            'siteSearch': '-youtube.com',
+            # 'siteSearch': '-youtube.com',
         }
         
         url = f"https://www.googleapis.com/customsearch/v1"
         response = requests.get(url, params)
-        
+        print(F"\n ######### RAW GOOGLE RESPONSE TO QUERY: {query}")
+        print(response.json())
         if response.status_code == 200:
             return response.json()
         raise Exception(f"API Error {response.status_code} : {response.text}")
@@ -199,10 +200,10 @@ class WebContentProcessor:
             if any(skip in url.lower() for skip in ['youtube.com', 'video', 'watch']):
                 continue
             
-            if url.lower().endswith('.pdf') or any(
-                domain in url.lower() for domain in ['blog', 'article', 'docs']
-            ):
-                filtered_items.append(item)
+            # if url.lower().endswith('.pdf') or any(
+            #     domain in url.lower() for domain in ['blog', 'article', 'docs']
+            # ):
+            filtered_items.append(item)
                 
         return filtered_items
     
@@ -333,7 +334,7 @@ class UserInterface:
                 print(response)
                 
             elif (choice == "2"):
-                pdf_path = os.path.join("pdf_to_read", "Prob_Stats_Module_4.pdf")
+                pdf_path = os.path.join("pdf_uploads", "Prob_Stats_Module_4.pdf")
                 new_vectorstore = process_pdf(pdf_path=pdf_path)
                 question = input("Query: ")
                 
@@ -369,7 +370,7 @@ class UserInterface:
                     docs = text_splitter.split_documents(documents)
                     vectorstore = FAISS.from_documents(docs, embeddings)
                     
-                    response, sources = LLMOperations.retrieval_qa(question, new_vectorstore, PROMPT_INTERNAL)
+                    response, sources = LLMOperations.retrieval_qa(question, vectorstore, PROMPT_INTERNAL)
                     
                     print("\nResponse: ")
                     print(response)
