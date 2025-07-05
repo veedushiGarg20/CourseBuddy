@@ -10,11 +10,13 @@ from dotenv import load_dotenv
 from langchain.chains import RetrievalQA, LLMChain
 from langchain.document_loaders import PyPDFLoader, WebBaseLoader
 from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.llms import OpenAI
+from langchain.chat_models import ChatOpenAI
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import FAISS
 from langchain.schema import Document
 from langchain.chains.retrieval_qa.prompt import PROMPT_INTERNAL, PROMPT_NO_SEARCH, PROMPT_WEB_QUERY
+
+st.set_page_config(layout="wide")
 
 load_dotenv()
 
@@ -87,6 +89,7 @@ class WebContentProcessor:
             for doc in documents:
                 doc.metadata["source_type"] = "pdf"
                 doc.metadata["original_url"] = pdf_path
+                print(pdf_path)
             return documents
         except Exception as e:
             st.error(f"Failed to process PDF {pdf_path}: {str(e)}")
@@ -173,7 +176,7 @@ class LLMOperations:
     @staticmethod
     def no_context_llm(question: str, prompt_template) -> str:
         qa = LLMChain(
-            llm=OpenAI(model="gpt-4", temperature=0.7, max_tokens=1000),
+            llm=ChatOpenAI(model="gpt-4o-mini", temperature=0.7, max_tokens=1000),
             prompt=prompt_template,
             verbose=True
         )
@@ -182,7 +185,7 @@ class LLMOperations:
     @staticmethod
     def retrieval_qa(question: str, vectorstore: FAISS, prompt_template):
         qa = RetrievalQA.from_chain_type(
-            llm=OpenAI(model="gpt-4", max_tokens=1000), 
+            llm=ChatOpenAI(model="gpt-4o-mini", max_tokens=1000), 
             chain_type="stuff", 
             chain_type_kwargs={"prompt": prompt_template},
             retriever=vectorstore.as_retriever(),
@@ -286,50 +289,53 @@ def no_search():
 
 def internal_search():
     st.subheader("Internal Knowledge Search")
+    col1, col2 = st.columns([2, 1])
+    pdf_path = None
+    with col1:
+        uploaded_file = st.file_uploader("Upload PDF: ", type="pdf", key="internal_pdf")
+        if uploaded_file is not None:
+            new_vector_store = handle_pdf_upload(uploaded_file)
+            if new_vector_store:
+                if st.session_state.vectorstore:
+                    st.session_state.vectorstore.merge_from(new_vector_store)
+                    st.success("PDF merged with existing knowledge base.")
+                else:
+                    st.session_state.vectorstore = new_vector_store
+                    st.success("New knowledge base has been created.")
+        
+        question = st.text_input("Enter your query:")
     
-    uploaded_file = st.file_uploader("Upload PDF: ", type="pdf", key="internal_pdf")
-    if uploaded_file is not None:
-        new_vector_store = handle_pdf_upload(uploaded_file)
-        if new_vector_store:
+        if st.button("Submit") and question:
             if st.session_state.vectorstore:
-                st.session_state.vectorstore.merge_from(new_vector_store)
-                st.success("PDF merged with existing knowledge base.")
-            else:
-                st.session_state.vectorstore = new_vector_store
-                st.success("New knowledge base has been created.")
-    
-    question = st.text_input("Enter your query:")
-    
-    if st.button("Submit") and question:
-        if st.session_state.vectorstore:
-            with st.spinner("Searching knowledge base..."):
-                response, sources = LLMOperations.retrieval_qa(
-                    question, 
-                    st.session_state.vectorstore, 
-                    PROMPT_INTERNAL
-                )
-                
-                st.write(response)
-                
-                if sources and len(sources) > 0:
-                    source_text = f"{sources[0].metadata['source']} - Page {sources[0].metadata['page']+1}"
-                    with st.expander("Sources"):
-                        st.write(source_text)
-                        
-                    pdf_path = None
-                    for filename in os.listdir(UPLOAD_DIR):
-                        if filename in sources[0].metadata['source']:
-                            pdf_path = os.path.join(UPLOAD_DIR, filename)
-                            break
+                with st.spinner("Searching knowledge base..."):
+                    response, sources = LLMOperations.retrieval_qa(
+                        question, 
+                        st.session_state.vectorstore, 
+                        PROMPT_INTERNAL
+                    )
                     
-                    if pdf_path:
-                        with st.sidebar:
-                            pdf_viewer(
-                                pdf_path,
-                                height=1000,
-                                width=700,
-                                pages_to_render=[sources[0].metadata['page']+1]
-                            )
+                    st.write(response)
+                    
+                    if sources and len(sources) > 0:
+                        source_text = f"{sources[0].metadata['source']} - Page {sources[0].metadata['page']+1}"
+                        with st.expander("Sources"):
+                            st.write(source_text)
+                        
+                        # pdf_path = None
+                        for filename in os.listdir(UPLOAD_DIR):
+                            if filename in sources[0].metadata['source']:
+                                pdf_path = os.path.join(UPLOAD_DIR, filename)
+                                break
+                        
+        if pdf_path:
+            with st.container():
+                with col2:
+                    st.subheader("PDF Viewer")
+                    pdf_viewer(
+                        pdf_path,
+                        height=800,
+                        width=700,
+                    )
         else:
             st.warning("No documents loaded - please upload a PDF first")
 

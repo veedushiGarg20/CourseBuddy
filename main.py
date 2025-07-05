@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from langchain.chains import RetrievalQA, LLMChain
 from langchain.document_loaders import PyPDFLoader, WebBaseLoader
 from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.llms import OpenAI
+from langchain.chat_models import ChatOpenAI
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import FAISS
 from langchain.schema import Document
@@ -41,6 +41,7 @@ USER_DB = {
 # Global state
 active_vectorstore = None
 embeddings = OpenAIEmbeddings(openai_api_key = os.environ.get("OPENAI_API_KEY"))
+print(embeddings)
 
 def get_file_hash(file_path : str) -> str:
     ''' Generating a MD5 hash of file content for indexing '''
@@ -50,6 +51,7 @@ def get_file_hash(file_path : str) -> str:
     
 def process_pdf(pdf_path: str) -> FAISS:
     ''' Dynamically handle user uploaded pdf with caching '''
+    
     file_hash = get_file_hash(pdf_path)
     index_path = os.path.join(INDEX_DIR, f"{file_hash}")
     
@@ -60,23 +62,31 @@ def process_pdf(pdf_path: str) -> FAISS:
     
     # Creating new index file
     print(f"Creating new index file for {pdf_path}")
-    loader = PyPDFLoader(pdf_path)
-    documents = loader.load()
     
+    try:
+        loader = PyPDFLoader(pdf_path)
+        documents = loader.load()
+        
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=100,
+            length_function=len,
+        )
+        
+        docs = text_splitter.split_documents(documents=documents)
+        
+        vectorstore = FAISS.from_documents(documents=docs, embedding=embeddings)
+        
+        
+        vectorstore.save_local(index_path)
+        
+        return vectorstore
     
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=100,
-        separators=[],
-        length_function=len,
-    )
-    
-    docs = text_splitter.split_documents(documents=documents)
-    vectorstore = FAISS.from_documents(documents=docs, embedding=embeddings)
-    
-    vectorstore.save_local(index_path)
-    
-    return vectorstore
+    except Exception as e:
+        print(f"DEBUG: Exception occurred at step: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise e
 
 
 def add_pdf(pdf_path : str):
@@ -238,7 +248,7 @@ class LLMOperations:
     def no_context_llm(question: str, prompt_template) -> str:
         ''' LLM without context '''
         qa = LLMChain(
-                    llm = OpenAI(model = "gpt-4o-mini",temperature=0.7, max_tokens=1000),
+                    llm = ChatOpenAI(model = "gpt-4o-mini",temperature=0.7, max_tokens=1000),
                     prompt= prompt_template,
                     verbose= True
                 )
@@ -249,7 +259,7 @@ class LLMOperations:
     def retrieval_qa(question: str, vectorstore: FAISS, prompt_template):
         ''' RetrievalQA with sources '''
         qa = RetrievalQA.from_chain_type(
-                llm = OpenAI(model = "gpt-4o-mini", max_tokens=1000), 
+                llm = ChatOpenAI(model = "gpt-4o-mini", max_tokens=1000), 
                 chain_type = "stuff", 
                 chain_type_kwargs = {"prompt": prompt_template},
                 retriever = vectorstore.as_retriever(),
@@ -295,6 +305,7 @@ class UserInterface:
             with open(pdf_path, "rb") as src, open(dest_path, "wb") as dest:
                 dest.write(src.read())
             print(f"Successfully uploaded and processsed {filename}")
+            print(pdf_path)
             
         except Exception as e:
             print(f"Error : {str(e)}")
@@ -334,20 +345,34 @@ class UserInterface:
                 print(response)
                 
             elif (choice == "2"):
-                pdf_path = os.path.join("pdf_uploads", "Prob_Stats_Module_4.pdf")
-                new_vectorstore = process_pdf(pdf_path=pdf_path)
-                question = input("Query: ")
+                global active_vectorstore
                 
-                response, sources = LLMOperations.retrieval_qa(question, new_vectorstore, PROMPT_INTERNAL)
+                if active_vectorstore is None:
+                    print("No PDFs in knowledge base. Please upload a PDF first.")
+                    pdf_path = input("Enter path to pdf: ").strip()
+                    
+                    try:
+                        add_pdf(pdf_path)
+                        print(f"Successfully added {os.path.basename(pdf_path)} to knowledge base")
 
-                print("\nResponse: ")
-                print(response)
+                    except Exception as e:
+                        print(f"Error processing PDF: {str(e)}")
+                        continue
                 
-                print("\n\n### SOURCES ###\n\n")
-                print(sources)
+                if active_vectorstore is not None:
+                    question = input("Query: ")
+                    response, sources = LLMOperations.retrieval_qa(question, active_vectorstore, PROMPT_INTERNAL)
+
+                    print("\nResponse: ")
+                    print(response)
                 
-                for i in range(len(sources)):
-                    print(len(sources[i].page_content))
+                    print("\n\n### SOURCES ###\n\n")
+                    print(sources)
+                
+                    for i in range(len(sources)):
+                        print(len(sources[i].page_content))
+                else:
+                    print("Failed to create or load knowledge base. Please try again.")
             
             elif (choice == "3"):
                 question = input("Query: ")
@@ -364,7 +389,7 @@ class UserInterface:
                     text_splitter = RecursiveCharacterTextSplitter(
                         chunk_size=1000,
                         chunk_overlap=200,
-                        separators=[],
+                        separators=["\n\n", "\n", " ", ""],
                         length_function=len,
                     )
                     docs = text_splitter.split_documents(documents)
