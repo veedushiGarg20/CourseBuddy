@@ -3,6 +3,5 @@
 .DS_Store
 models.txt
 /pdf_to_read/*.pdf
-langchain-dev/
 /pdf_uploads/*.pdf
 /faiss_indexes
