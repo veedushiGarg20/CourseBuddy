@@ -1,6 +1,6 @@
 # CourseBuddy
 
-CourseBuddy is a Streamlit web app for uploading, indexing and querying PDF documents using OpenAI embeddings and LangChain. It also supports web search integration.
+CourseBuddy is a Streamlit web app designed to assist students in their school/college coursework. It enables uploading, indexing and querying PDF documents using OpenAI embeddings and LangChain. It also supports web search integration.
 
 ## Features
 
